@@ -1,0 +1,163 @@
+
+ARG distribution=""
+ARG release=""
+ARG codename=""
+ARG variant=""
+ARG php_version=""
+
+# FROM php:${php_version:+${php_version}-}${variant:+${variant}-}${codename:+${codename}}
+FROM ${distribution}:${codename}
+
+MAINTAINER Rodrigo Cabral <rodrigo.cabral_ti@live.com>
+
+# ARG ORACLE_LATEST=${oracle_latest}
+
+ENV TZ="America/Manaus" \
+	LC_ALL="C.UTF-8" \
+	LANG="pt_BR.utf8" \
+	LANGUAGE="pt_BR:pt" \
+	ORACLE_LATEST=${oracle_latest} \
+	PHP_VERSION="5.6.40" \
+	PHP_VERSION_MIN="5.6" \
+	PHP_LIBS="bcmath,cli,curl,dev,gd,imagick,intl,mbstring,mysql,pgsql,redis,sqlite*,swoole,xml,zip"
+
+RUN set +xe \
+	# echo ${ORACLE_LATEST} && sleep 30 \
+	&& echo $TZ | tee /etc/timezone \
+	&& apt-get update -y && apt-get upgrade -yq --no-install-recommends \
+	&& apt-get install -y --no-install-recommends \
+		locales \
+		software-properties-common \
+		apt-transport-https \
+		lsb-release \
+		ca-certificates \
+		curl \
+	&& localedef -i pt_BR -c -f UTF-8 -A /usr/share/locale/locale.alias pt_BR.UTF-8 \
+	&& locale-gen pt_BR.UTF-8 \
+	\
+	&& curl -fsSL https://packages.sury.org/php/apt.gpg -o /etc/apt/trusted.gpg.d/php.gpg \
+	&& echo "deb https://packages.sury.org/php/ $(lsb_release -sc) main" > /etc/apt/sources.list.d/ondrej-php.list \
+	&& apt-get update -y && apt-get upgrade -yq --no-install-recommends \
+	&& apt-get install -y --no-install-recommends \
+		libfreetype6-dev \
+		libjpeg62-turbo-dev \
+		libpng-dev \
+		php${PHP_VERSION_MIN}-bcmath \
+		php${PHP_VERSION_MIN}-cli \
+		php${PHP_VERSION_MIN}-curl \
+		php${PHP_VERSION_MIN}-dev \
+		php${PHP_VERSION_MIN}-gd \
+		php${PHP_VERSION_MIN}-imagick \
+		php${PHP_VERSION_MIN}-intl \
+		php${PHP_VERSION_MIN}-mbstring \
+		php${PHP_VERSION_MIN}-redis \
+		php${PHP_VERSION_MIN}-sqlite* \
+		php${PHP_VERSION_MIN}-xml \
+		php${PHP_VERSION_MIN}-zip \
+	&& curl -sSi https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer \
+	&& php -v \
+	\
+	&& apt-get purge -y locales software-properties-common \
+	&& apt-get autoclean && apt-get autoremove -y \
+	&& rm -rf /var/lib/apt/lists/* \
+	&& rm -rf /tmp/oracle* /usr/lib/python3 \
+	&& apt-get update -y && apt-get upgrade -yq --no-install-recommends \
+	&& apt-get autoclean && apt-get autoremove -y \
+	&& rm -rf /var/lib/apt/lists/*
+
+ENV ORACLE_LATEST="12.1" \
+	# ORACLE_LATEST=${ORACLE_LATEST} \
+	ORACLE_RPM="oracle-instantclient*rpm" \
+	ORACLE_BASE=/usr/lib/oracle \
+	# ORACLE_HOME=/usr/lib/oracle/${ORACLE_LATEST}/client64 \
+	ORACLE_HOME=/usr/lib/oracle/12.1/client64 \
+	# LD_LIBRARY_PATH=/usr/lib/oracle/${ORACLE_LATEST}/client64/lib \
+	LD_LIBRARY_PATH=/usr/lib/oracle/12.1/client64/lib \
+	NLS_TERRITORY=BRAZIL \
+	NLS_LANG="BRAZILIAN PORTUGUESE_BRAZIL.UTF8" \
+	NLS_LANGUAGE="BRAZILIAN PORTUGUESE" \
+	NLS_CHARACTERSET=UTF8 \
+	NLS_NCHAR_CHARACTERSET=AL32UTF8 \
+	NLS_CURRENCY="R$" \
+	NLS_NUMERIC_CHARACTERS=".," \
+	NLS_SORT=WEST_EUROPEAN_AI \
+	NLS_COMP=BINARY \
+	NLS_DATE_FORMAT="RRRR-MM-DD HH24:MI:SS" \
+	NLS_TIMESTAMP_FORMAT="RRRR-MM-DD HH24:MI:SS.FF"
+
+COPY $ORACLE_RPM /tmp/
+
+RUN set +xe \
+	&& apt-get update -y && apt-get upgrade -yq --no-install-recommends \
+	&& apt-get install -y --no-install-recommends \
+		libaio1 \
+		alien \
+	&& rm -rf /var/lib/apt/lists/* \
+	\
+	&& alien --scripts --install /tmp/oracle*rpm && apt-get install -f -y --no-install-recommends \
+	# && export {C_INCLUDE_PATH}=${C_INCLUDE_PATH}:/usr/include/oracle/${ORACLE_LATEST}/client64 \
+	&& export PATH=${ORACLE_HOME}/bin:$PATH && echo $PATH \
+	&& echo ${LD_LIBRARY_PATH} | tee /etc/ld.so.conf.d/oracle.conf \
+	&& cat /etc/ld.so.conf.d/oracle.conf \
+	&& ldconfig -n ${LD_LIBRARY_PATH} \
+	&& ldconfig \
+	&& cd /tmp \
+	&& curl -fsSL https://github.com/php/php-src/archive/php-${PHP_VERSION}.tar.gz -o php-${PHP_VERSION}.tar.gz \
+	&& tar -xzf php-${PHP_VERSION}.tar.gz \
+	&& cd php-src-php-${PHP_VERSION}/ext/oci8  \
+	&& phpize  \
+	&& ./configure --with-oci8=instantclient  \
+	&& make && make install \
+	&& ldd /usr/lib/php/201*/oci8.so \
+	&& chmod -x /usr/lib/php/201*/* \
+	&& { \
+		echo "; configuration for php oracle module"; \
+		echo "; priority=20"; \
+		echo "extension=oci8.so"; \
+		echo ; \
+		echo "oci8.ping_interval = -1"; \
+		echo "oci8.events = On"; \
+		echo "oci8.statement_cache_size = 60"; \
+		echo "oci8.default_prefetch = 300"; \
+		} | tee /etc/php/${PHP_VERSION_MIN}/mods-available/oci8.ini \
+	&& phpenmod -v ${PHP_VERSION_MIN} oci8 \
+	# && php -i | grep -i oci \
+	&& php --ri oci8 \
+	\
+	&& cd /tmp/php-src-php-${PHP_VERSION}/ext/pdo_oci \
+	&& cd /usr/include/php/ \
+	&& ln -sfv 201*/ext ext \
+	&& cd - \
+	&& sed -i "s/data_size;/data_size * 3;/g" oci_statement.c \
+	&& phpize \
+	&& ./configure --with-pdo-oci=instantclient,/usr,${ORACLE_LATEST} \
+	&& make && make install \
+	&& ldd /usr/lib/php/201*/pdo_oci.so \
+	&& chmod -x /usr/lib/php/201*/* \
+	&& { \
+		echo "; configuration for php oracle module"; \
+		echo "; priority=20"; \
+		echo "extension=pdo_oci.so"; \
+	} | tee /etc/php/${PHP_VERSION_MIN}/mods-available/pdo_oci.ini \
+	&& phpenmod -v ${PHP_VERSION_MIN} pdo_oci \
+	# && php -i | grep -i oci | ccze -A \
+	&& php --ri oci8 \
+	&& php --ri pdo_oci \
+	\
+	&& php -v \
+	&& apt-get purge -y alien oracle-instantclient${ORACLE_LATEST}-devel \
+	&& apt-get autoclean && apt-get autoremove -y \
+	&& rm -rf /var/lib/apt/lists/* \
+	&& rm -rf /tmp/oracle* /usr/lib/python3 \
+	&& apt-get update -y && apt-get upgrade -yq --no-install-recommends \
+	&& apt-get autoclean && apt-get autoremove -y \
+	&& rm -rf /var/lib/apt/lists/* \
+	&& php -v
+
+# Use the default production configuration
+# RUN mv "$PHP_INI_DIR/php.ini-production" "$PHP_INI_DIR/php.ini"
+# Override with custom mysql settings
+# COPY config/mysql.ini $PHP_INI_DIR/conf.d/
+# COPY config/pdo_mysql.ini $PHP_INI_DIR/conf.d/
+
+CMD ["php", "-a"]
